@@ -36,7 +36,7 @@ Changes:
 #endif
 
 #ifndef CONTRAST_HISTOGRAM_SAMPLE_STRIDE
-	#define CONTRAST_HISTOGRAM_SAMPLE_STRIDE 8
+	#define CONTRAST_HISTOGRAM_SAMPLE_STRIDE 16
 #endif
 
 #define DIVIDE_ROUNDING_UP(numerator, denominator) (int(numerator + denominator - 1) / int(denominator))
@@ -542,13 +542,13 @@ namespace Contrast
 		}
 	}
 
-	technique ContrastStretch<ui_tooltip = "A histogram based contrast stretching shader that adaptively adjusts the contrast of the image\n"
+	technique ContrastStretch<ui_tooltip = "A histogram based contrast stretching shader that\n"
+										   "adaptively adjusts the contrast of the image\n"
 										   "based on its contents.\n\n"
 										   "Part of Insane Shaders \n"
 										   "By: Lord Of Lunacy\n\n"
-										   "The default histogram sample stride is 8 pixels in each dimension; lower CONTRAST_HISTOGRAM_SAMPLE_STRIDE for a denser histogram at higher cost.\n"
-										   "Histogram samples are accumulated directly into the histogram.\n"
-										   "Prefix sums, variance calculation, and LUT generation share a combined compute pass, which requires compute-shader support.\n\n"
+										   "Optimized By: Snoggles\n\n"
+										   "CONTRAST_HISTOGRAM_SAMPLE_STRIDE trades performance and quality.\n"
 										   "CONTRAST_LUT_SIZES correspond as follows: \n"
 										   "0 for 256 \n1 for 1024 (default) \n2 for 2048 \n3 for 4096";>
 	{
