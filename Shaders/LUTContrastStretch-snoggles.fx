@@ -25,6 +25,7 @@ Changes:
 - Draw histogram samples directly, removing HistogramMerge: 0.197 -> 0.191 ms/frame
 - Remove unused CONTRAST_COMPUTE option
 - Remove CONTRAST_LUT_SIZE which seems to incorrectly impact exposure at non-default values.
+- Apply external LUT before contrast (perf: without adding an additional pass).
 */
 
 // Marty's LUT shader 1.0 for ReShade 3.0; Copyright © 2008-2016 Marty McFly.
@@ -375,9 +376,8 @@ namespace Contrast
 		position = float4(texcoord * float2(2.0, -2.0) + float2(-1.0, 1.0), 0.0, 1.0);
 	}
 
-	void LUTApplyPS(float4 pos : SV_Position, float2 texcoord : TEXCOORD, out float4 color : SV_Target0)
+	float3 ApplyLUT(float3 color)
 	{
-		color = tex2D(sBackBuffer, texcoord);
 		float2 texelsize = 1.0 / fLUT_TileSizeXY;
 		texelsize.x /= fLUT_TileAmount;
 
@@ -386,19 +386,19 @@ namespace Contrast
 		lutcoord.x += (lutcoord.z - lerpfact) * texelsize.y;
 
 		float3 lutcolor = lerp(
-			tex2D(SamplerLUT, lutcoord.xy).xyz,
-			tex2D(SamplerLUT, float2(lutcoord.x + texelsize.y, lutcoord.y)).xyz,
+			tex2Dlod(SamplerLUT, float4(lutcoord.xy, 0, 0)).xyz,
+			tex2Dlod(SamplerLUT, float4(lutcoord.x + texelsize.y, lutcoord.y, 0, 0)).xyz,
 			lerpfact);
 
-		color.xyz = lerp(normalize(color.xyz), normalize(lutcolor), fLUT_AmountChroma) *
-			lerp(length(color.xyz), length(lutcolor), fLUT_AmountLuma);
-		color.w = 1.0;
+		return lerp(normalize(color), normalize(lutcolor), fLUT_AmountChroma) *
+			lerp(length(color), length(lutcolor), fLUT_AmountLuma);
 	}
 
 	void HistogramVS(in uint id : SV_VertexID, out float4 pos : SV_Position)
 	{
 		float2 coord = floor(float2(id % SAMPLE_DIMENSIONS.x, id / SAMPLE_DIMENSIONS.x)) * RESOLUTION_MULTIPLIER + 0.5;
-		float luma = (round(dot(tex2Dfetch(sBackBuffer, coord).rgb, float3(0.299, 0.587, 0.114)) * (BIN_COUNT - 1)) + 0.5) / float(BIN_COUNT);
+		float3 color = ApplyLUT(tex2Dfetch(sBackBuffer, coord).rgb);
+		float luma = (round(dot(color, float3(0.299, 0.587, 0.114)) * (BIN_COUNT - 1)) + 0.5) / float(BIN_COUNT);
 		
 		pos.x = luma * 2 - 1;
 		pos.y = 0;
@@ -413,7 +413,7 @@ namespace Contrast
 	
 	void OutputPS(float4 pos : SV_Position, float2 texcoord : TEXCOORD, out float3 color : SV_Target0)
 	{
-		color = tex2D(sBackBuffer, texcoord).rgb;
+		color = ApplyLUT(tex2D(sBackBuffer, texcoord).rgb);
 		if(!all(color == 0.0) && !all(color == 1.0))
 		{
 			float yOld = dot(color, float3(0.299, 0.587, 0.114));
@@ -475,12 +475,6 @@ namespace Contrast
 										   "Optimized By: Snoggles\n\n"
 										   "CONTRAST_HISTOGRAM_SAMPLE_STRIDE trades performance and quality.";>
 	{
-		pass LUT
-		{
-			VertexShader = PostProcessVS;
-			PixelShader = LUTApplyPS;
-		}
-
 		pass Histogram
 		{
 			VertexShader = HistogramVS;
