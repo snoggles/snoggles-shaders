@@ -13,6 +13,12 @@ http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.526.5037&rep=rep1&type=
 Original author: Lord of Lunacy
 Original source: https://github.com/LordOfLunacy/Insane-Shaders
 Original license: CC0 1.0 Universal
+
+Modifications by: Snoggles
+Offered upstream in: https://github.com/LordOfLunacy/Insane-Shaders/pull/17
+Changes:
+- Add human-readable option descriptions
+- Prevent from altering pure black/white values.
 */
 
 #if (((__RENDERER__ >= 0xb000 && __RENDERER__ < 0x10000) || (__RENDERER__ >= 0x14300)) && __RESHADE__ >=40800)
@@ -100,6 +106,7 @@ namespace Contrast
 	uniform float Minimum<
 		ui_type = "slider";
 		ui_label = "Minimum";
+		ui_tooltip = "Sets the lowest output brightness used when stretching the dark range. Lower values keep shadows darker; higher values lift shadows and can make the image look washed out. Pure black remains unchanged.";
 		ui_category = "Thresholds";
 		ui_min = 0; ui_max = 1;
 	> = 0;
@@ -107,6 +114,7 @@ namespace Contrast
 	uniform float DarkThreshold<
 		ui_type = "slider";
 		ui_label = "Dark Threshold";
+		ui_tooltip = "Sets the brightness boundary between the dark and middle ranges. Lower values classify fewer tones as dark; higher values extend the dark-range adjustment into brighter tones.";
 		ui_category = "Thresholds";
 		ui_min = 0; ui_max = 1;
 	> = 0.333;
@@ -114,6 +122,7 @@ namespace Contrast
 	uniform float LightThreshold<
 		ui_type = "slider";
 		ui_label = "LightThreshold";
+		ui_tooltip = "Sets the brightness boundary between the middle and light ranges. Lower values start the light-range adjustment at darker tones; higher values reserve it for brighter tones and extend the middle range.";
 		ui_category = "Thresholds";
 		ui_min = 0; ui_max = 1;
 	> = 0.667;
@@ -121,6 +130,7 @@ namespace Contrast
 	uniform float Maximum<
 		ui_type = "slider";
 		ui_label = "Maximum";
+		ui_tooltip = "Sets the highest output brightness used when stretching the light range. Lower values compress highlights and make them dimmer; higher values allow brighter highlights. Pure white remains unchanged.";
 		ui_category = "Thresholds";
 		ui_min = 0; ui_max = 1;
 	> = 1;
@@ -128,7 +138,7 @@ namespace Contrast
 	uniform float MaxVariance<
 		ui_type = "slider";
 		ui_label = "Maximum Curve Value";
-		ui_tooltip = "Value that the weighting curves return to 0 at.";
+		ui_tooltip = "Sets the upper variance used to evaluate all three blending curves. When a curve peak is below this value, its influence falls to zero here. Lower values make blending taper off sooner; higher values allow it across a wider variance range.";
 		ui_category = "Maximum Curve Value";
 		ui_min = 0.15; ui_max = 1;
 	> = 1;
@@ -136,6 +146,7 @@ namespace Contrast
 	uniform float DarkPeak<
 		ui_type = "slider";
 		ui_label = "Dark Blending Curve";
+		ui_tooltip = "Sets the dark-range variance where its adjustment reaches maximum strength. Lower values place strongest blending at lower variance; higher values move it toward higher variance. The actual strength is controlled by Dark Maximum Blending.";
 		ui_category = "Dark Settings";
 		ui_min = 0; ui_max = 1;
 	> = 0.5;
@@ -143,6 +154,7 @@ namespace Contrast
 	uniform float DarkMax<
 		ui_type = "slider";
 		ui_label = "Dark Maximum Blending";
+		ui_tooltip = "Sets how strongly the histogram-based adjustment can affect dark tones. Lower values preserve more of the original shadows; higher values apply more of the dark-range stretch. Set to 0 to disable this blending.";
 		ui_category = "Dark Settings";
 		ui_min = 0; ui_max = 1;
 	> = 0.45;
@@ -150,6 +162,7 @@ namespace Contrast
 	uniform float MidPeak<
 		ui_type = "slider";
 		ui_label = "Mid Blending Curve";
+		ui_tooltip = "Sets the middle-range variance where its adjustment reaches maximum strength. Lower values place strongest blending at lower variance; higher values move it toward higher variance. The actual strength is controlled by Mid Maximum Blending.";
 		ui_category = "Mid Settings";
 		ui_min = 0; ui_max = 1;
 	> = 0.55;
@@ -157,6 +170,7 @@ namespace Contrast
 	uniform float MidMax<
 		ui_type = "slider";
 		ui_label = "Mid Maximum Blending";
+		ui_tooltip = "Sets how strongly the histogram-based adjustment can affect middle tones. Lower values keep midtones closer to their original brightness; higher values apply more of the middle-range stretch. Set to 0 to disable this blending.";
 		ui_category = "Mid Settings";
 		ui_min = 0; ui_max = 1;
 	> = 0.45;
@@ -164,6 +178,7 @@ namespace Contrast
 	uniform float LightPeak<
 		ui_type = "slider";
 		ui_label = "Light Blending Curve";
+		ui_tooltip = "Sets the light-range variance where its adjustment reaches maximum strength. Lower values place strongest blending at lower variance; higher values move it toward higher variance. The actual strength is controlled by Light Maximum Blending.";
 		ui_category = "Light Settings";
 		ui_min = 0; ui_max = 1;
 	> = 0.45;
@@ -171,6 +186,7 @@ namespace Contrast
 	uniform float LightMax<
 		ui_type = "slider";
 		ui_label = "Light Maximum Blending";
+		ui_tooltip = "Sets how strongly the histogram-based adjustment can affect light tones. Lower values preserve more of the original highlights; higher values apply more of the light-range stretch. Set to 0 to disable this blending.";
 		ui_category = "Light Settings";
 		ui_min = 0; ui_max = 1;
 	> = 0.3;
@@ -178,6 +194,7 @@ namespace Contrast
 	uniform uint Debug<
 		ui_type = "combo";
 		ui_label = "Debug";
+		ui_tooltip = "Selects an inspection view instead of the normal image: Histogram shows sampled brightness counts; Dark, Mid, and Light Curve Input show the measured variance for each range. None disables the debug view.";
 		ui_category = "Debug Views";
 		ui_items = "None \0Histogram \0Dark Curve Input \0Mid Curve Input \0Light Curve Input \0";
 	> = 0;
@@ -443,16 +460,19 @@ namespace Contrast
 	void OutputPS(float4 pos : SV_Position, float2 texcoord : TEXCOORD, out float3 color : SV_Target0)
 	{
 		color = tex2D(sBackBuffer, texcoord).rgb;
-		float yOld = dot(color, float3(0.299, 0.587, 0.114));
-		float y = tex2D(sHistogramLUT, float2(yOld, 0.5)).x;
-		
-		float cb = -0.168736 * color.r - 0.331264 * color.g + 0.500000 * color.b;
-		float cr = +0.500000 * color.r - 0.418688 * color.g - 0.081312 * color.b;
-		
-		color = float3(
-				y + 1.402 * cr,
-				y - 0.344136 * cb - 0.714136 * cr,
-				y + 1.772 * cb);
+		if(!all(color == 0.0) && !all(color == 1.0))
+		{
+			float yOld = dot(color, float3(0.299, 0.587, 0.114));
+			float y = tex2D(sHistogramLUT, float2(yOld, 0.5)).x;
+
+			float cb = -0.168736 * color.r - 0.331264 * color.g + 0.500000 * color.b;
+			float cr = +0.500000 * color.r - 0.418688 * color.g - 0.081312 * color.b;
+
+			color = float3(
+					y + 1.402 * cr,
+					y - 0.344136 * cb - 0.714136 * cr,
+					y + 1.772 * cb);
+		}
 				
 		if(Debug == 1)
 		{
