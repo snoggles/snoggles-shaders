@@ -23,11 +23,9 @@ Changes:
 - Combine PrefixSums + Variances phases: 0.265 -> 0.204 ms/frame
 - Combine LUT generation into PrefixVariance: 0.204 -> 0.197 ms/frame
 - Draw histogram samples directly, removing HistogramMerge: 0.197 -> 0.191 ms/frame
+- Remove unused CONTRAST_COMPUTE option
+- Remove CONTRAST_LUT_SIZE which seems to incorrectly impact exposure at non-default values.
 */
-
-#ifndef CONTRAST_LUT_SIZE
-	#define CONTRAST_LUT_SIZE 1
-#endif
 
 #ifndef CONTRAST_HISTOGRAM_SAMPLE_STRIDE
 	#define CONTRAST_HISTOGRAM_SAMPLE_STRIDE 16
@@ -35,15 +33,7 @@ Changes:
 
 #define PREFIX_SCAN_THREADS 256
 
-#if CONTRAST_LUT_SIZE == 3
-	#define BIN_COUNT 4096
-#elif CONTRAST_LUT_SIZE == 2
-	#define BIN_COUNT 2048
-#elif CONTRAST_LUT_SIZE == 1
-	#define BIN_COUNT 1024
-#else
-	#define BIN_COUNT 256
-#endif
+#define BIN_COUNT 1024
 
 #define PREFIX_SCAN_BINS_PER_THREAD (BIN_COUNT / PREFIX_SCAN_THREADS)
 
@@ -433,9 +423,7 @@ namespace Contrast
 										   "Part of Insane Shaders \n"
 										   "By: Lord Of Lunacy\n\n"
 										   "Optimized By: Snoggles\n\n"
-										   "CONTRAST_HISTOGRAM_SAMPLE_STRIDE trades performance and quality.\n"
-										   "CONTRAST_LUT_SIZES correspond as follows: \n"
-										   "0 for 256 \n1 for 1024 (default) \n2 for 2048 \n3 for 4096";>
+										   "CONTRAST_HISTOGRAM_SAMPLE_STRIDE trades performance and quality.";>
 	{
 		pass Histogram
 		{
