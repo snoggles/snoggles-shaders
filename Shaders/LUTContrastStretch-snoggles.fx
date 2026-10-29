@@ -98,7 +98,7 @@ namespace Contrast
 
 	uniform float DarkMax<
 		ui_type = "slider";
-		ui_label = "Dark Strength";
+		ui_label = "Dark Stretch";
 		ui_tooltip = "Sets how strongly the histogram-based adjustment can affect dark tones. Lower values preserve more of the original shadows; higher values apply more of the dark-range stretch. Set to 0 to disable this blending.";
 		ui_category = "Contrast";
 		ui_min = 0; ui_max = 3;
@@ -106,7 +106,7 @@ namespace Contrast
 
 	uniform float MidMax<
 		ui_type = "slider";
-		ui_label = "Mid Strength";
+		ui_label = "Mid Stretch";
 		ui_tooltip = "Sets how strongly the histogram-based adjustment can affect middle tones. Lower values keep midtones closer to their original brightness; higher values apply more of the middle-range stretch. Set to 0 to disable this blending.";
 		ui_category = "Contrast";
 		ui_min = 0; ui_max = 3;
@@ -114,7 +114,7 @@ namespace Contrast
 
 	uniform float LightMax<
 		ui_type = "slider";
-		ui_label = "Light Strength";
+		ui_label = "Light Stretch";
 		ui_tooltip = "Sets how strongly the histogram-based adjustment can affect light tones. Lower values preserve more of the original highlights; higher values apply more of the light-range stretch. Set to 0 to disable this blending.";
 		ui_category = "Contrast";
 		ui_min = 0; ui_max = 3;
