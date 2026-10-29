@@ -85,7 +85,7 @@ namespace Contrast
 		ui_min = 0.00; ui_max = 1.00;
 		ui_label = "LUT chroma amount";
 		ui_tooltip = "Intensity of color/chroma change of the LUT.";
-		ui_category = "LUT Strength";
+		ui_category = "LUT";
 	> = 1.00;
 
 	uniform float fLUT_AmountLuma <
@@ -93,31 +93,30 @@ namespace Contrast
 		ui_min = 0.00; ui_max = 1.00;
 		ui_label = "LUT luma amount";
 		ui_tooltip = "Intensity of luma change of the LUT.";
-		ui_category = "LUT Strength";
+		ui_category = "LUT";
 	> = 1.00;
 
 	uniform float DarkMax<
 		ui_type = "slider";
-		ui_label = "Dark Maximum Blending";
+		ui_label = "Dark Strength";
 		ui_tooltip = "Sets how strongly the histogram-based adjustment can affect dark tones. Lower values preserve more of the original shadows; higher values apply more of the dark-range stretch. Set to 0 to disable this blending.";
-		ui_category = "Contrast Strength";
+		ui_category = "Contrast";
 		ui_min = 0; ui_max = 3;
 	> = 0.45;
 
 	uniform float MidMax<
 		ui_type = "slider";
-		ui_label = "Mid Maximum Blending";
+		ui_label = "Mid Strength";
 		ui_tooltip = "Sets how strongly the histogram-based adjustment can affect middle tones. Lower values keep midtones closer to their original brightness; higher values apply more of the middle-range stretch. Set to 0 to disable this blending.";
-		ui_category = "Contrast Strength";
+		ui_category = "Contrast";
 		ui_min = 0; ui_max = 3;
 	> = 0.45;
 
-
 	uniform float LightMax<
 		ui_type = "slider";
-		ui_label = "Light Maximum Blending";
+		ui_label = "Light Strength";
 		ui_tooltip = "Sets how strongly the histogram-based adjustment can affect light tones. Lower values preserve more of the original highlights; higher values apply more of the light-range stretch. Set to 0 to disable this blending.";
-		ui_category = "Contrast Strength";
+		ui_category = "Contrast";
 		ui_min = 0; ui_max = 3;
 	> = 0.3;
 
@@ -197,7 +196,40 @@ namespace Contrast
 		ui_category_closed = true;
 		ui_items = "None \0Histogram \0Dark Curve Input \0Mid Curve Input \0Light Curve Input \0";
 	> = 0;
-	
+
+	uniform float Gamma <
+		ui_text = "Filters applied after contrast:";
+		ui_type = "slider";
+		ui_label = "Gamma";
+		ui_tooltip = "Adjust midtones. 1.0 is neutral.";
+		ui_category = "Tonemap";
+		ui_min = 0.0; ui_max = 2.0;
+	> = 1.0;
+
+	uniform float Exposure <
+		ui_type = "slider";
+		ui_label = "Exposure";
+		ui_tooltip = "Adjust exposure.";
+		ui_category = "Tonemap";
+		ui_min = -1.0; ui_max = 1.0;
+	> = 0.0;
+
+	uniform float Saturation <
+		ui_type = "slider";
+		ui_label = "Saturation";
+		ui_tooltip = "Adjust saturation.";
+		ui_category = "Tonemap";
+		ui_min = -1.0; ui_max = 1.0;
+	> = 0.0;
+
+	uniform float Bleach <
+		ui_type = "slider";
+		ui_label = "Bleach";
+		ui_tooltip = "Brightens the shadows and fades the colors.";
+		ui_category = "Tonemap";
+		ui_min = 0.0; ui_max = 1.0;
+	> = 0.0;
+
 	float WeightingCurve(float peak, float variance, float maximumBlending)
 	{
 		variance = clamp(variance, 0, MaxVariance);
@@ -418,6 +450,32 @@ namespace Contrast
 	{
 		add = 1;
 	}
+
+	float3 ApplyTonemap(float3 color)
+	{
+		color = saturate(color);
+		color *= pow(2.0, Exposure);
+		color = pow(color, Gamma);
+
+		const float3 coefLuma = float3(0.2126, 0.7152, 0.0722);
+		float lum = dot(coefLuma, color);
+
+		float L = saturate(10.0 * (lum - 0.45));
+		float3 A2 = Bleach * color;
+
+		float3 result1 = 2.0 * color * lum;
+		float3 result2 = 1.0 - 2.0 * (1.0 - lum) * (1.0 - color);
+
+		float3 newColor = lerp(result1, result2, L);
+		float3 mixRGB = A2 * newColor;
+		color += ((1.0 - A2) * mixRGB);
+
+		float middlegray = dot(color, (1.0 / 3.0));
+		float3 diffcolor = color - middlegray;
+		color = (color + diffcolor * Saturation) / (1 + (diffcolor * Saturation));
+
+		return color;
+	}
 	
 	void OutputPS(float4 pos : SV_Position, float2 texcoord : TEXCOORD, out float3 color : SV_Target0)
 	{
@@ -434,6 +492,11 @@ namespace Contrast
 					y + 1.402 * cr,
 					y - 0.344136 * cb - 0.714136 * cr,
 					y + 1.772 * cb);
+		}
+
+		if(Gamma != 1.0 || Exposure != 0.0 || Saturation != 0.0 || Bleach != 0.0)
+		{
+			color = ApplyTonemap(color);
 		}
 				
 		if(Debug == 1)
