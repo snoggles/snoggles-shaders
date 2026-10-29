@@ -21,6 +21,7 @@ Changes:
 - Prevent from altering pure black/white values.
 - Add CONTRAST_HISTOGRAM_SAMPLE_STRIDE=8 0.360 -> 0.265 ms/frame
 - Combine PrefixSums + Variances phases: 0.265 -> 0.204 ms/frame
+- Combine LUT generation into PrefixVariance: 0.204 -> 0.197 ms/frame
 */
 
 #if (((__RENDERER__ >= 0xb000 && __RENDERER__ < 0x10000) || (__RENDERER__ >= 0x14300)) && __RESHADE__ >=40800)
@@ -83,11 +84,9 @@ namespace Contrast
 {
 	texture BackBuffer : COLOR;
 	texture Histogram {Width = BIN_COUNT; Height = 1; Format = R32f;};
-	texture PrefixSums {Width = BIN_COUNT; Height = 1; Format = RG32f;};
 
 	sampler sBackBuffer {Texture = BackBuffer;};
 	sampler sHistogram {Texture = Histogram;};
-	sampler sPrefixSums {Texture = PrefixSums;};
 
 	
 #if CONTRAST_COMPUTE == 0
@@ -102,8 +101,8 @@ namespace Contrast
 	sampler sVariances {Texture = Variances;};
 	sampler sHistogramLUT {Texture = HistogramLUT;};
 
-	storage wPrefixSums {Texture = PrefixSums;};
 	storage wVariances {Texture = Variances;};
+	storage wHistogramLUT {Texture = HistogramLUT;};
 
 #if CONTRAST_COMPUTE != 0
 	texture LocalTiles {Width = BIN_COUNT; Height = DISPATCH_SIZE.x * DISPATCH_SIZE.y; Format = R32f;};
@@ -112,7 +111,6 @@ namespace Contrast
 	
 	storage wLocalTiles {Texture = LocalTiles;};
 	storage wHistogram {Texture = Histogram;};
-	storage wHistogramLUT {Texture = HistogramLUT;};
 #endif
 
 	uniform float Minimum<
@@ -354,7 +352,6 @@ namespace Contrast
 		{
 			uint bin = threadIndex * PREFIX_SCAN_BINS_PER_THREAD + i;
 			float2 prefix = localPrefixes[i] + previousBlockSum;
-			tex2Dstore(wPrefixSums, int2(bin, 0), float4(prefix, 0, 0));
 
 			if(bin == thresholds.x)
 			{
@@ -412,6 +409,64 @@ namespace Contrast
 			tex2Dstore(wVariances, int2(1, 0), float4(PrefixVarianceSums[0].y, 0, 0, 0));
 			tex2Dstore(wVariances, int2(2, 0), float4(PrefixVarianceSums[0].z, 0, 0, 0));
 		}
+
+		[loop]
+		for(uint i = 0; i < PREFIX_SCAN_BINS_PER_THREAD; ++i)
+		{
+			uint bin = threadIndex * PREFIX_SCAN_BINS_PER_THREAD + i;
+			float prefixSum = localPrefixes[i].x + previousBlockSum.x;
+			float input = (float(bin) + 0.5) / float(BIN_COUNT);
+			float lut;
+
+			if(bin <= thresholds.x)
+			{
+				if(prefixSum > 0)
+				{
+					lut = prefixSum / PrefixScanThresholds[0].x;
+					lut = lut * (DarkThreshold - Minimum) + Minimum;
+					float alpha = WeightingCurve(DarkPeak, PrefixVarianceSums[0].x, DarkMax);
+					lut = lerp(input, lut, alpha);
+				}
+				else
+				{
+					lut = input * (DarkThreshold - Minimum) + Minimum;
+				}
+			}
+			else if(bin <= thresholds.y)
+			{
+				float previousSum = PrefixScanThresholds[0].x;
+				float denominator = PrefixScanThresholds[1].x - previousSum;
+				if(denominator < 1)
+				{
+					lut = input * (LightThreshold - DarkThreshold) + DarkThreshold;
+				}
+				else
+				{
+					lut = (prefixSum - previousSum) / denominator;
+					lut = lut * (LightThreshold - DarkThreshold) + DarkThreshold;
+					float alpha = WeightingCurve(MidPeak, PrefixVarianceSums[0].y, MidMax);
+					lut = lerp(input, lut, alpha);
+				}
+			}
+			else
+			{
+				float previousSum = PrefixScanThresholds[1].x;
+				float denominator = PrefixScanThresholds[2].x - previousSum;
+				if(denominator < 1)
+				{
+					lut = input * (Maximum - LightThreshold) + LightThreshold;
+				}
+				else
+				{
+					lut = (prefixSum - previousSum) / denominator;
+					lut = lut * (Maximum - LightThreshold) + LightThreshold;
+					float alpha = WeightingCurve(LightPeak, PrefixVarianceSums[0].z, LightMax);
+					lut = lerp(input, lut, alpha);
+				}
+			}
+
+			tex2Dstore(wHistogramLUT, int2(bin, 0), float4(lut, 0, 0, 0));
+		}
 	}
 
 	// Vertex shader generating a triangle covering the entire screen
@@ -466,61 +521,6 @@ namespace Contrast
 	void TexcoordXPS(float4 pos : SV_Position, float2 texcoord : TEXCOORD, out float output : SV_Target0)
 	{
 		output = texcoord.x;
-	}
-	
-	void LUTGenerationPS(float4 pos : SV_Position, float2 texcoord : TEXCOORD, out float LUT : SV_Target0)
-	{
-		float2 coord = float2(round(texcoord.x * float(BIN_COUNT - 1)), 0);
-		float prefixSum = tex2Dfetch(sPrefixSums, coord).x;
-		uint2 thresholds = round(float2(DarkThreshold, LightThreshold) * (BIN_COUNT - 1));
-		if(coord.x <= thresholds.x)
-		{
-			if(prefixSum > 0)
-			{
-				LUT = (prefixSum / tex2Dfetch(sPrefixSums, float2(thresholds.x, 0)).x);
-				LUT = LUT * (DarkThreshold - Minimum) + Minimum;
-				float alpha = WeightingCurve(DarkPeak, tex2Dfetch(sVariances, float2(0, 0)).x, DarkMax);
-				LUT = lerp(texcoord.x, LUT, alpha);
-			}
-			else
-			{
-				LUT = texcoord.x * (DarkThreshold - Minimum) + Minimum;
-			}
-		}
-		else if(coord.x <= thresholds.y)
-		{
-			float previousSum = tex2Dfetch(sPrefixSums, float2(thresholds.x, 0)).x;
-			prefixSum -= previousSum;
-			float denominator = tex2Dfetch(sPrefixSums, float2(thresholds.y, 0)).x - previousSum;
-			if(denominator < 1)
-			{
-				LUT = texcoord.x * (LightThreshold - DarkThreshold) + DarkThreshold;
-			}
-			else
-			{
-				LUT = prefixSum / denominator;
-				LUT = LUT * (LightThreshold - DarkThreshold) + DarkThreshold;
-				float alpha = WeightingCurve(MidPeak, tex2Dfetch(sVariances, float2(1, 0)).x, MidMax);
-				LUT = lerp(texcoord.x, LUT, alpha);
-			}
-		}
-		else
-		{
-			float previousSum = tex2Dfetch(sPrefixSums, float2(thresholds.y, 0)).x;
-			prefixSum -= previousSum;
-			float denominator = tex2Dfetch(sPrefixSums, float2(BIN_COUNT - 1, 0)).x - previousSum;
-			if(denominator < 1)
-			{
-				LUT = texcoord.x * (Maximum - LightThreshold) + LightThreshold;
-			}
-			else
-			{
-				LUT = prefixSum / denominator;
-				LUT = LUT * (Maximum - LightThreshold) + LightThreshold;
-				float alpha = WeightingCurve(LightPeak, tex2Dfetch(sVariances, float2(2, 0)).x, LightMax);
-				LUT = lerp(texcoord.x, LUT, alpha);
-			}
-		}
 	}
 	
 	void OutputPS(float4 pos : SV_Position, float2 texcoord : TEXCOORD, out float3 color : SV_Target0)
@@ -584,7 +584,7 @@ namespace Contrast
 										   "Part of Insane Shaders \n"
 										   "By: Lord Of Lunacy\n\n"
 										   "The default histogram sample stride is 8 pixels in each dimension; lower CONTRAST_HISTOGRAM_SAMPLE_STRIDE for a denser histogram at higher cost.\n"
-										   "Prefix sums and variance calculation use a combined compute pass, which requires compute-shader support.\n\n"
+										   "Prefix sums, variance calculation, and LUT generation share a combined compute pass, which requires compute-shader support.\n\n"
 										   "CONTRAST_LUT_SIZES correspond as follows: \n"
 										   "0 for 256 \n1 for 1024 (default) \n2 for 2048 \n3 for 4096";>
 	{
@@ -637,13 +637,6 @@ namespace Contrast
 			ComputeShader = PrefixVarianceCS<PREFIX_SCAN_THREADS, 1, 1>;
 			DispatchSizeX = 1;
 			DispatchSizeY = 1;
-		}
-		
-		pass LUTGeneration
-		{
-			VertexShader = PostProcessVS;
-			PixelShader = LUTGenerationPS;
-			RenderTarget0 = HistogramLUT;
 		}
 		
 		pass Output
