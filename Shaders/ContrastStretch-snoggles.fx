@@ -19,6 +19,7 @@ Offered upstream in: https://github.com/LordOfLunacy/Insane-Shaders/pull/17
 Changes:
 - Add human-readable option descriptions
 - Prevent from altering pure black/white values.
+- Add CONTRAST_HISTOGRAM_SAMPLE_STRIDE=8 0.360 ms/frame -> 0.265 ms/frame
 */
 
 #if (((__RENDERER__ >= 0xb000 && __RENDERER__ < 0x10000) || (__RENDERER__ >= 0x14300)) && __RESHADE__ >=40800)
@@ -29,6 +30,10 @@ Changes:
 
 #ifndef CONTRAST_LUT_SIZE
 	#define CONTRAST_LUT_SIZE 1
+#endif
+
+#ifndef CONTRAST_HISTOGRAM_SAMPLE_STRIDE
+	#define CONTRAST_HISTOGRAM_SAMPLE_STRIDE 8
 #endif
 
 #define DIVIDE_ROUNDING_UP(numerator, denominator) (int(numerator + denominator - 1) / int(denominator))
@@ -53,7 +58,7 @@ Changes:
 	#define RESOLUTION_MULTIPLIER 1
 #else
 	#undef RESOLUTION_MULTIPLIER
-	#define RESOLUTION_MULTIPLIER 4
+	#define RESOLUTION_MULTIPLIER CONTRAST_HISTOGRAM_SAMPLE_STRIDE
 #endif
 #define DISPATCH_SIZE uint2(DIVIDE_ROUNDING_UP(BUFFER_WIDTH, TILES_SAMPLES_PER_THREAD.x * GROUP_SIZE.x * RESOLUTION_MULTIPLIER), \
 					  DIVIDE_ROUNDING_UP(BUFFER_HEIGHT, TILES_SAMPLES_PER_THREAD.y * GROUP_SIZE.y * RESOLUTION_MULTIPLIER))
@@ -517,6 +522,7 @@ namespace Contrast
 										   "based on its contents.\n\n"
 										   "Part of Insane Shaders \n"
 										   "By: Lord Of Lunacy\n\n"
+										   "The default histogram sample stride is 8 pixels in each dimension; lower CONTRAST_HISTOGRAM_SAMPLE_STRIDE for a denser histogram at higher cost.\n\n"
 										   "CONTRAST_LUT_SIZES correspond as follows: \n"
 										   "0 for 256 \n1 for 1024 (default) \n2 for 2048 \n3 for 4096";>
 	{
