@@ -19,7 +19,8 @@ Offered upstream in: https://github.com/LordOfLunacy/Insane-Shaders/pull/17
 Changes:
 - Add human-readable option descriptions
 - Prevent from altering pure black/white values.
-- Add CONTRAST_HISTOGRAM_SAMPLE_STRIDE=8 0.360 ms/frame -> 0.265 ms/frame
+- Add CONTRAST_HISTOGRAM_SAMPLE_STRIDE=8 0.360 -> 0.265 ms/frame
+- Combine PrefixSums + Variances phases: 0.265 -> 0.204 ms/frame
 */
 
 #if (((__RENDERER__ >= 0xb000 && __RENDERER__ < 0x10000) || (__RENDERER__ >= 0x14300)) && __RESHADE__ >=40800)
@@ -36,10 +37,15 @@ Changes:
 	#define CONTRAST_HISTOGRAM_SAMPLE_STRIDE 8
 #endif
 
+#ifndef CONTRAST_PREFIX_VARIANCE_COMPUTE
+	#define CONTRAST_PREFIX_VARIANCE_COMPUTE 0
+#endif
+
 #define DIVIDE_ROUNDING_UP(numerator, denominator) (int(numerator + denominator - 1) / int(denominator))
 
 #define TILES_SAMPLES_PER_THREAD uint2(2, 2)
 #define COLUMN_SAMPLES_PER_THREAD 4
+#define PREFIX_SCAN_THREADS 256
 #define LOCAL_ARRAY_SIZE (TILES_SAMPLES_PER_THREAD.x * TILES_SAMPLES_PER_THREAD.y)
 
 #if CONTRAST_LUT_SIZE == 3
@@ -51,6 +57,8 @@ Changes:
 #else
 	#define BIN_COUNT 256
 #endif
+
+#define PREFIX_SCAN_BINS_PER_THREAD (BIN_COUNT / PREFIX_SCAN_THREADS)
 
 #define GROUP_SIZE uint2(32, 32)
 #if CONTRAST_COMPUTE != 0
@@ -97,7 +105,12 @@ namespace Contrast
 	
 	sampler sVariances {Texture = Variances;};
 	sampler sHistogramLUT {Texture = HistogramLUT;};
-	
+
+#if CONTRAST_PREFIX_VARIANCE_COMPUTE != 0
+	storage wPrefixSums {Texture = PrefixSums;};
+	storage wVariances {Texture = Variances;};
+#endif
+
 #if CONTRAST_COMPUTE != 0
 	texture LocalTiles {Width = BIN_COUNT; Height = DISPATCH_SIZE.x * DISPATCH_SIZE.y; Format = R32f;};
 	
@@ -298,7 +311,117 @@ namespace Contrast
 		}
 	}
 #endif
-	
+
+#if CONTRAST_PREFIX_VARIANCE_COMPUTE != 0
+	groupshared float2 PrefixScanTotals[PREFIX_SCAN_THREADS];
+	groupshared float2 PrefixScanThresholds[3];
+	groupshared float3 PrefixVarianceSums[PREFIX_SCAN_THREADS];
+
+	void PrefixVarianceCS(uint3 groupThreadID : SV_GroupThreadID)
+	{
+		uint threadIndex = groupThreadID.x;
+		uint2 thresholds = round(float2(DarkThreshold, LightThreshold) * (BIN_COUNT - 1));
+		float2 localPrefixes[PREFIX_SCAN_BINS_PER_THREAD];
+		float localCounts[PREFIX_SCAN_BINS_PER_THREAD];
+		float2 localSum = 0;
+
+		[loop]
+		for(uint i = 0; i < PREFIX_SCAN_BINS_PER_THREAD; ++i)
+		{
+			uint bin = threadIndex * PREFIX_SCAN_BINS_PER_THREAD + i;
+			float count = tex2Dfetch(sHistogram, float2(bin, 0)).x;
+			localCounts[i] = count;
+			localSum += float2(count, count * bin);
+			localPrefixes[i] = localSum;
+		}
+
+		PrefixScanTotals[threadIndex] = localSum;
+		barrier();
+
+		[unroll]
+		for(uint offset = 1; offset < PREFIX_SCAN_THREADS; offset *= 2)
+		{
+			float2 previous = threadIndex >= offset ? PrefixScanTotals[threadIndex - offset] : 0;
+			barrier();
+			PrefixScanTotals[threadIndex] += previous;
+			barrier();
+		}
+
+		if(threadIndex == 0)
+		{
+			PrefixScanThresholds[0] = 0;
+			PrefixScanThresholds[1] = 0;
+			PrefixScanThresholds[2] = PrefixScanTotals[PREFIX_SCAN_THREADS - 1];
+		}
+		barrier();
+
+		float2 previousBlockSum = threadIndex == 0 ? 0 : PrefixScanTotals[threadIndex - 1];
+		[loop]
+		for(uint i = 0; i < PREFIX_SCAN_BINS_PER_THREAD; ++i)
+		{
+			uint bin = threadIndex * PREFIX_SCAN_BINS_PER_THREAD + i;
+			float2 prefix = localPrefixes[i] + previousBlockSum;
+			tex2Dstore(wPrefixSums, int2(bin, 0), float4(prefix, 0, 0));
+
+			if(bin == thresholds.x)
+			{
+				PrefixScanThresholds[0] = prefix;
+			}
+			if(bin == thresholds.y)
+			{
+				PrefixScanThresholds[1] = prefix;
+			}
+		}
+		barrier();
+
+		float2 darkSums = PrefixScanThresholds[0];
+		float2 midSums = PrefixScanThresholds[1] - darkSums;
+		float2 lightSums = PrefixScanThresholds[2] - PrefixScanThresholds[1];
+		float darkMean = darkSums.y / darkSums.x;
+		float midMean = midSums.y / midSums.x;
+		float lightMean = lightSums.y / lightSums.x;
+		float3 localVariance = 0;
+
+		[loop]
+		for(uint i = 0; i < PREFIX_SCAN_BINS_PER_THREAD; ++i)
+		{
+			uint bin = threadIndex * PREFIX_SCAN_BINS_PER_THREAD + i;
+			if(bin <= thresholds.x)
+			{
+				localVariance.x += abs(float(bin) - darkMean) / float(thresholds.x - 1) * (localCounts[i] / darkSums.x);
+			}
+			else if(bin <= thresholds.y)
+			{
+				localVariance.y += abs(float(bin) - midMean) / float(thresholds.y - thresholds.x) * (localCounts[i] / midSums.x);
+			}
+			else
+			{
+				localVariance.z += abs(float(bin) - lightMean) / float(BIN_COUNT - thresholds.y) * (localCounts[i] / lightSums.x);
+			}
+		}
+
+		PrefixVarianceSums[threadIndex] = localVariance;
+		barrier();
+
+		[unroll]
+		for(uint offset = PREFIX_SCAN_THREADS / 2; offset > 0; offset /= 2)
+		{
+			if(threadIndex < offset)
+			{
+				PrefixVarianceSums[threadIndex] += PrefixVarianceSums[threadIndex + offset];
+			}
+			barrier();
+		}
+
+		if(threadIndex == 0)
+		{
+			tex2Dstore(wVariances, int2(0, 0), float4(PrefixVarianceSums[0].x, 0, 0, 0));
+			tex2Dstore(wVariances, int2(1, 0), float4(PrefixVarianceSums[0].y, 0, 0, 0));
+			tex2Dstore(wVariances, int2(2, 0), float4(PrefixVarianceSums[0].z, 0, 0, 0));
+		}
+	}
+#endif
+
 	// Vertex shader generating a triangle covering the entire screen
 	void PostProcessVS(in uint id : SV_VertexID, out float4 position : SV_Position, out float2 texcoord : TEXCOORD)
 	{
@@ -522,7 +645,8 @@ namespace Contrast
 										   "based on its contents.\n\n"
 										   "Part of Insane Shaders \n"
 										   "By: Lord Of Lunacy\n\n"
-										   "The default histogram sample stride is 8 pixels in each dimension; lower CONTRAST_HISTOGRAM_SAMPLE_STRIDE for a denser histogram at higher cost.\n\n"
+										   "The default histogram sample stride is 8 pixels in each dimension; lower CONTRAST_HISTOGRAM_SAMPLE_STRIDE for a denser histogram at higher cost.\n"
+										   "Set CONTRAST_PREFIX_VARIANCE_COMPUTE=1 to test a compute path that combines prefix sums and variance calculation; it requires compute-shader support.\n\n"
 										   "CONTRAST_LUT_SIZES correspond as follows: \n"
 										   "0 for 256 \n1 for 1024 (default) \n2 for 2048 \n3 for 4096";>
 	{
@@ -570,6 +694,14 @@ namespace Contrast
 		}
 #endif
 		
+#if CONTRAST_PREFIX_VARIANCE_COMPUTE != 0
+		pass PrefixVariance
+		{
+			ComputeShader = PrefixVarianceCS<PREFIX_SCAN_THREADS, 1, 1>;
+			DispatchSizeX = 1;
+			DispatchSizeY = 1;
+		}
+#else
 		pass PrefixSums
 		{
 			VertexShader = PrefixSumsVS;
@@ -597,6 +729,7 @@ namespace Contrast
 			SrcBlend = ONE;
 			DestBlend = ONE;
 		}
+#endif
 		
 		pass LUTGeneration
 		{
