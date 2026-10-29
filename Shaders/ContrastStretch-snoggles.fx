@@ -63,13 +63,40 @@ namespace Contrast
 	storage wVariances {Texture = Variances;};
 	storage wHistogramLUT {Texture = HistogramLUT;};
 
+	uniform float DarkMax<
+		ui_type = "slider";
+		ui_label = "Dark Maximum Blending";
+		ui_tooltip = "Sets how strongly the histogram-based adjustment can affect dark tones. Lower values preserve more of the original shadows; higher values apply more of the dark-range stretch. Set to 0 to disable this blending.";
+		ui_category = "Contrast Strength";
+		ui_min = 0; ui_max = 3;
+	> = 0.45;
+
+	uniform float MidMax<
+		ui_type = "slider";
+		ui_label = "Mid Maximum Blending";
+		ui_tooltip = "Sets how strongly the histogram-based adjustment can affect middle tones. Lower values keep midtones closer to their original brightness; higher values apply more of the middle-range stretch. Set to 0 to disable this blending.";
+		ui_category = "Contrast Strength";
+		ui_min = 0; ui_max = 3;
+	> = 0.45;
+
+
+	uniform float LightMax<
+		ui_type = "slider";
+		ui_label = "Light Maximum Blending";
+		ui_tooltip = "Sets how strongly the histogram-based adjustment can affect light tones. Lower values preserve more of the original highlights; higher values apply more of the light-range stretch. Set to 0 to disable this blending.";
+		ui_category = "Contrast Strength";
+		ui_min = 0; ui_max = 3;
+	> = 0.3;
+
 	uniform float Minimum<
 		ui_type = "slider";
 		ui_label = "Minimum";
 		ui_tooltip = "Sets the lowest output brightness used when stretching the dark range. Lower values keep shadows darker; higher values lift shadows and can make the image look washed out. Pure black remains unchanged.";
 		ui_category = "Thresholds";
+		ui_category_closed = true;
 		ui_min = 0; ui_max = 1;
 	> = 0;
+
 
 	uniform float DarkThreshold<
 		ui_type = "slider";
@@ -95,69 +122,49 @@ namespace Contrast
 		ui_min = 0; ui_max = 1;
 	> = 1;
 	
-	uniform float MaxVariance<
-		ui_type = "slider";
-		ui_label = "Maximum Curve Value";
-		ui_tooltip = "Sets the upper variance used to evaluate all three blending curves. When a curve peak is below this value, its influence falls to zero here. Lower values make blending taper off sooner; higher values allow it across a wider variance range.";
-		ui_category = "Maximum Curve Value";
-		ui_min = 0.15; ui_max = 1;
-	> = 1;
-
+	
 	uniform float DarkPeak<
 		ui_type = "slider";
 		ui_label = "Dark Blending Curve";
 		ui_tooltip = "Sets the dark-range variance where its adjustment reaches maximum strength. Lower values place strongest blending at lower variance; higher values move it toward higher variance. The actual strength is controlled by Dark Maximum Blending.";
-		ui_category = "Dark Settings";
+		ui_category = "Thresholds";
 		ui_min = 0; ui_max = 1;
 	> = 0.5;
 	
-	uniform float DarkMax<
-		ui_type = "slider";
-		ui_label = "Dark Maximum Blending";
-		ui_tooltip = "Sets how strongly the histogram-based adjustment can affect dark tones. Lower values preserve more of the original shadows; higher values apply more of the dark-range stretch. Set to 0 to disable this blending.";
-		ui_category = "Dark Settings";
-		ui_min = 0; ui_max = 3;
-	> = 0.45;
-
 	uniform float MidPeak<
 		ui_type = "slider";
 		ui_label = "Mid Blending Curve";
 		ui_tooltip = "Sets the middle-range variance where its adjustment reaches maximum strength. Lower values place strongest blending at lower variance; higher values move it toward higher variance. The actual strength is controlled by Mid Maximum Blending.";
-		ui_category = "Mid Settings";
+		ui_category = "Thresholds";
 		ui_min = 0; ui_max = 1;
 	> = 0.55;
-	
-	uniform float MidMax<
-		ui_type = "slider";
-		ui_label = "Mid Maximum Blending";
-		ui_tooltip = "Sets how strongly the histogram-based adjustment can affect middle tones. Lower values keep midtones closer to their original brightness; higher values apply more of the middle-range stretch. Set to 0 to disable this blending.";
-		ui_category = "Mid Settings";
-		ui_min = 0; ui_max = 3;
-	> = 0.45;
 
 	uniform float LightPeak<
 		ui_type = "slider";
 		ui_label = "Light Blending Curve";
 		ui_tooltip = "Sets the light-range variance where its adjustment reaches maximum strength. Lower values place strongest blending at lower variance; higher values move it toward higher variance. The actual strength is controlled by Light Maximum Blending.";
-		ui_category = "Light Settings";
+		ui_category = "Thresholds";
 		ui_min = 0; ui_max = 1;
 	> = 0.45;
-	
-	uniform float LightMax<
+
+	uniform float MaxVariance<
 		ui_type = "slider";
-		ui_label = "Light Maximum Blending";
-		ui_tooltip = "Sets how strongly the histogram-based adjustment can affect light tones. Lower values preserve more of the original highlights; higher values apply more of the light-range stretch. Set to 0 to disable this blending.";
-		ui_category = "Light Settings";
-		ui_min = 0; ui_max = 3;
-	> = 0.3;
+		ui_label = "Maximum Curve Value";
+		ui_tooltip = "Sets the upper variance used to evaluate all three blending curves. When a curve peak is below this value, its influence falls to zero here. Lower values make blending taper off sooner; higher values allow it across a wider variance range.";
+		ui_category = "Maximum Curve Value";
+		ui_category_closed = true;
+		ui_min = 0.15; ui_max = 1;
+	> = 1;
 	
 	uniform uint Debug<
 		ui_type = "combo";
 		ui_label = "Debug";
 		ui_tooltip = "Selects an inspection view instead of the normal image: Histogram shows sampled brightness counts; Dark, Mid, and Light Curve Input show the measured variance for each range. None disables the debug view.";
 		ui_category = "Debug Views";
+		ui_category_closed = true;
 		ui_items = "None \0Histogram \0Dark Curve Input \0Mid Curve Input \0Light Curve Input \0";
 	> = 0;
+
 	
 	float WeightingCurve(float peak, float variance, float maximumBlending)
 	{
