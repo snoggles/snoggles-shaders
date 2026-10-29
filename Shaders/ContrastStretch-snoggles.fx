@@ -22,6 +22,7 @@ Changes:
 - Add CONTRAST_HISTOGRAM_SAMPLE_STRIDE=8 0.360 -> 0.265 ms/frame
 - Combine PrefixSums + Variances phases: 0.265 -> 0.204 ms/frame
 - Combine LUT generation into PrefixVariance: 0.204 -> 0.197 ms/frame
+- Draw histogram samples directly, removing HistogramMerge: 0.197 -> 0.191 ms/frame
 */
 
 #if (((__RENDERER__ >= 0xb000 && __RENDERER__ < 0x10000) || (__RENDERER__ >= 0x14300)) && __RESHADE__ >=40800)
@@ -74,8 +75,6 @@ Changes:
 							    (BUFFER_HEIGHT / RESOLUTION_MULTIPLIER))
 					  
 #define VERTEX_COUNT uint(SAMPLE_DIMENSIONS.x * SAMPLE_DIMENSIONS.y)
-#define SAMPLES_PER_HISTOGRAM 128
-#define ROW_COUNT uint(DIVIDE_ROUNDING_UP(VERTEX_COUNT, SAMPLES_PER_HISTOGRAM))
 
 
 
@@ -87,14 +86,6 @@ namespace Contrast
 
 	sampler sBackBuffer {Texture = BackBuffer;};
 	sampler sHistogram {Texture = Histogram;};
-
-	
-#if CONTRAST_COMPUTE == 0
-	texture HistogramRows {Width = BIN_COUNT; Height = ROW_COUNT; Format = R8;};
-	
-	sampler sHistogramRows {Texture = HistogramRows;};
-#endif
-
 	texture Variances {Width = 3; Height = 1; Format = R32f;};
 	texture HistogramLUT {Width = BIN_COUNT; Height = 1; Format = R32f;};
 	
@@ -484,43 +475,15 @@ namespace Contrast
 		float luma = (round(dot(tex2Dfetch(sBackBuffer, coord).rgb, float3(0.299, 0.587, 0.114)) * (BIN_COUNT - 1)) + 0.5) / float(BIN_COUNT);
 		
 		pos.x = luma * 2 - 1;
-		pos.y = (floor(id / SAMPLES_PER_HISTOGRAM) + 0.5) / float(ROW_COUNT) * 2 - 1;
+		pos.y = 0;
 		pos.z = 0;
-		pos.w = 1;
-	}
-	
-	void HistogramMergeVS(in uint id : SV_VertexID, out float4 pos : SV_Position, out float2 sum : TEXCOORD)
-	{
-		float2 coord = floor(float2(id % BIN_COUNT, id / BIN_COUNT));
-		coord.y = coord.y * 8 + 0.5;
-		sum = 0;
-		
-		[unroll]
-		for(int i = 0; i < 8; i += 2)
-		{
-			sum += tex2Dfetch(sHistogramRows, coord).xx * 512;
-		}
-		if(sum.x < 1)
-		{
-			pos.x = 2;
-		}
-		else
-		{
-			pos.x = ((coord.x + 0.5) / float(BIN_COUNT)) * 2 - 1;
-		}
-		pos.yz = 0;
 		pos.w = 1;
 	}
 #endif
 	
 	void HistogramPS(float4 pos : SV_Position, out float add : SV_Target0)
 	{
-		add = 0.00390625; // (1 / 256)
-	}
-	
-	void TexcoordXPS(float4 pos : SV_Position, float2 texcoord : TEXCOORD, out float output : SV_Target0)
-	{
-		output = texcoord.x;
+		add = 1;
 	}
 	
 	void OutputPS(float4 pos : SV_Position, float2 texcoord : TEXCOORD, out float3 color : SV_Target0)
@@ -584,6 +547,7 @@ namespace Contrast
 										   "Part of Insane Shaders \n"
 										   "By: Lord Of Lunacy\n\n"
 										   "The default histogram sample stride is 8 pixels in each dimension; lower CONTRAST_HISTOGRAM_SAMPLE_STRIDE for a denser histogram at higher cost.\n"
+										   "Histogram samples are accumulated directly into the histogram.\n"
 										   "Prefix sums, variance calculation, and LUT generation share a combined compute pass, which requires compute-shader support.\n\n"
 										   "CONTRAST_LUT_SIZES correspond as follows: \n"
 										   "0 for 256 \n1 for 1024 (default) \n2 for 2048 \n3 for 4096";>
@@ -607,23 +571,9 @@ namespace Contrast
 		{
 			VertexShader = HistogramVS;
 			PixelShader = HistogramPS;
-			RenderTarget0 = HistogramRows;
-			PrimitiveTopology = POINTLIST;
-			VertexCount = VERTEX_COUNT;
-			ClearRenderTargets = true;
-			BlendEnable = true;
-			BlendOp = ADD;
-			SrcBlend = ONE;
-			DestBlend = ONE;
-		}
-		
-		pass HistogramMerge
-		{
-			VertexShader = HistogramMergeVS;
-			PixelShader = TexcoordXPS;
 			RenderTarget0 = Histogram;
 			PrimitiveTopology = POINTLIST;
-			VertexCount = DIVIDE_ROUNDING_UP(BIN_COUNT * ROW_COUNT, 8);
+			VertexCount = VERTEX_COUNT;
 			ClearRenderTargets = true;
 			BlendEnable = true;
 			BlendOp = ADD;
