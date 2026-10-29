@@ -37,10 +37,6 @@ Changes:
 	#define CONTRAST_HISTOGRAM_SAMPLE_STRIDE 8
 #endif
 
-#ifndef CONTRAST_PREFIX_VARIANCE_COMPUTE
-	#define CONTRAST_PREFIX_VARIANCE_COMPUTE 0
-#endif
-
 #define DIVIDE_ROUNDING_UP(numerator, denominator) (int(numerator + denominator - 1) / int(denominator))
 
 #define TILES_SAMPLES_PER_THREAD uint2(2, 2)
@@ -106,10 +102,8 @@ namespace Contrast
 	sampler sVariances {Texture = Variances;};
 	sampler sHistogramLUT {Texture = HistogramLUT;};
 
-#if CONTRAST_PREFIX_VARIANCE_COMPUTE != 0
 	storage wPrefixSums {Texture = PrefixSums;};
 	storage wVariances {Texture = Variances;};
-#endif
 
 #if CONTRAST_COMPUTE != 0
 	texture LocalTiles {Width = BIN_COUNT; Height = DISPATCH_SIZE.x * DISPATCH_SIZE.y; Format = R32f;};
@@ -312,7 +306,6 @@ namespace Contrast
 	}
 #endif
 
-#if CONTRAST_PREFIX_VARIANCE_COMPUTE != 0
 	groupshared float2 PrefixScanTotals[PREFIX_SCAN_THREADS];
 	groupshared float2 PrefixScanThresholds[3];
 	groupshared float3 PrefixVarianceSums[PREFIX_SCAN_THREADS];
@@ -420,7 +413,6 @@ namespace Contrast
 			tex2Dstore(wVariances, int2(2, 0), float4(PrefixVarianceSums[0].z, 0, 0, 0));
 		}
 	}
-#endif
 
 	// Vertex shader generating a triangle covering the entire screen
 	void PostProcessVS(in uint id : SV_VertexID, out float4 position : SV_Position, out float2 texcoord : TEXCOORD)
@@ -466,63 +458,9 @@ namespace Contrast
 	}
 #endif
 	
-	void PrefixSumsVS(in uint id : SV_VertexID, out float4 pos : SV_Position, out float2 prefixes : TEXCOORD)
-	{
-		uint bin = id / 2;
-		float2 coord;
-		coord.x = (id % 2 == 0) ? bin : (BIN_COUNT);
-		coord.y = 0;
-		pos.x = ((coord.x + 0.5) / float(BIN_COUNT)) * 2 - 1;
-		pos.yz = 0;
-		pos.w = 1;
-		prefixes = tex2Dfetch(sHistogram, float2(bin, 0)).xx;
-		prefixes.y *= bin;
-	}
-	
-	void VariancesVS(in uint id : SV_VertexID, out float4 pos : SV_Position, out float2 partialVariance : TEXCOORD)
-	{
-		uint bin = id;
-		pos.yz = 0;
-		pos.w = 1;
-		uint2 thresholds = round(float2(DarkThreshold, LightThreshold) * (BIN_COUNT - 1));
-		if(bin <= thresholds.x)
-		{
-			float2 sums = tex2Dfetch(sPrefixSums, float2(thresholds.x, 0)).xy;
-			float mean = sums.y / sums.x;
-			float localSum = tex2Dfetch(sHistogram, float2(bin, 0)).x;
-			partialVariance = ((abs(bin - mean)) / float(thresholds.x - 1)) * (localSum / sums.x);
-			pos.x = -0.66666666666;
-		}
-		else if(bin <= thresholds.y)
-		{
-			float2 sums = tex2Dfetch(sPrefixSums, float2(thresholds.y, 0)).xy;
-			float2 previousSums = tex2Dfetch(sPrefixSums, float2(thresholds.x, 0)).xy;
-			sums -= previousSums;
-			float mean = sums.y / sums.x;
-			float localSum = tex2Dfetch(sHistogram, float2(bin, 0)).x;
-			partialVariance = ((abs(float(bin) - mean)) / float(thresholds.y - thresholds.x)) * (localSum / sums.x);
-			pos.x = 0;
-		}
-		else
-		{
-			float2 sums = tex2Dfetch(sPrefixSums, float2(BIN_COUNT - 1, 0)).xy;
-			float2 previousSums = tex2Dfetch(sPrefixSums, float2(thresholds.y, 0)).xy;
-			sums -= previousSums;
-			float mean = sums.y / sums.x;
-			float localSum = tex2Dfetch(sHistogram, float2(bin, 0)).x;
-			partialVariance = ((abs(float(bin) - mean)) / float(BIN_COUNT - thresholds.y)) * (localSum / sums.x);
-			pos.x = 0.66666666666;
-		}
-			
-	}
 	void HistogramPS(float4 pos : SV_Position, out float add : SV_Target0)
 	{
 		add = 0.00390625; // (1 / 256)
-	}
-	
-	void PrefixSumsPS(float4 pos : SV_Position, float2 prefixes : TEXCOORD, out float2 output : SV_Target0)
-	{
-		output = prefixes;
 	}
 	
 	void TexcoordXPS(float4 pos : SV_Position, float2 texcoord : TEXCOORD, out float output : SV_Target0)
@@ -646,7 +584,7 @@ namespace Contrast
 										   "Part of Insane Shaders \n"
 										   "By: Lord Of Lunacy\n\n"
 										   "The default histogram sample stride is 8 pixels in each dimension; lower CONTRAST_HISTOGRAM_SAMPLE_STRIDE for a denser histogram at higher cost.\n"
-										   "Set CONTRAST_PREFIX_VARIANCE_COMPUTE=1 to test a compute path that combines prefix sums and variance calculation; it requires compute-shader support.\n\n"
+										   "Prefix sums and variance calculation use a combined compute pass, which requires compute-shader support.\n\n"
 										   "CONTRAST_LUT_SIZES correspond as follows: \n"
 										   "0 for 256 \n1 for 1024 (default) \n2 for 2048 \n3 for 4096";>
 	{
@@ -694,42 +632,12 @@ namespace Contrast
 		}
 #endif
 		
-#if CONTRAST_PREFIX_VARIANCE_COMPUTE != 0
 		pass PrefixVariance
 		{
 			ComputeShader = PrefixVarianceCS<PREFIX_SCAN_THREADS, 1, 1>;
 			DispatchSizeX = 1;
 			DispatchSizeY = 1;
 		}
-#else
-		pass PrefixSums
-		{
-			VertexShader = PrefixSumsVS;
-			PixelShader = PrefixSumsPS;
-			RenderTarget0 = PrefixSums;
-			PrimitiveTopology = LINELIST;
-			VertexCount = BIN_COUNT * 2;
-			ClearRenderTargets = true;
-			BlendEnable = true;
-			BlendOp = ADD;
-			SrcBlend = ONE;
-			DestBlend = ONE;
-		}
-		
-		pass Variances
-		{
-			VertexShader = VariancesVS;
-			PixelShader = TexcoordXPS;
-			RenderTarget0 = Variances;
-			PrimitiveTopology = POINTLIST;
-			VertexCount = BIN_COUNT;
-			ClearRenderTargets = true;
-			BlendEnable = true;
-			BlendOp = ADD;
-			SrcBlend = ONE;
-			DestBlend = ONE;
-		}
-#endif
 		
 		pass LUTGeneration
 		{
