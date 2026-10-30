@@ -230,6 +230,37 @@ namespace Contrast
 		ui_min = 0.0; ui_max = 1.0;
 	> = 0.0;
 
+	uniform float3 TechnicolorColorStrength <
+		ui_type = "color";
+		ui_label = "Color Strength";
+		ui_tooltip = "Higher values produce darker, more intense colors.";
+		ui_category = "Technicolor";
+	> = float3(0.2, 0.2, 0.2);
+
+	uniform float TechnicolorBrightness <
+		ui_type = "slider";
+		ui_label = "Brightness";
+		ui_tooltip = "Adjust the brightness of the Technicolor effect.";
+		ui_category = "Technicolor";
+		ui_min = 0.5; ui_max = 1.5;
+	> = 1.0;
+
+	uniform float TechnicolorSaturation <
+		ui_type = "slider";
+		ui_label = "Saturation";
+		ui_tooltip = "Adjust saturation to counteract oversaturation from the effect.";
+		ui_category = "Technicolor";
+		ui_min = 0.0; ui_max = 1.5;
+	> = 1.0;
+
+	uniform float TechnicolorStrength <
+		ui_type = "slider";
+		ui_label = "Strength";
+		ui_tooltip = "Blend the Technicolor effect with the original image. 0 disables the effect.";
+		ui_category = "Technicolor";
+		ui_min = 0.0; ui_max = 1.0;
+	> = 0.0;
+
 	float WeightingCurve(float peak, float variance, float maximumBlending)
 	{
 		variance = clamp(variance, 0, MaxVariance);
@@ -476,6 +507,32 @@ namespace Contrast
 
 		return color;
 	}
+
+	float3 ApplyTechnicolor(float3 color)
+	{
+		color = saturate(color);
+
+		float3 temp = 1.0 - color;
+		float3 target = temp.grg;
+		float3 target2 = temp.bbr;
+		float3 temp2 = color * target;
+		temp2 *= target2;
+
+		temp = temp2 * TechnicolorColorStrength;
+		temp2 *= TechnicolorBrightness;
+
+		target = temp.grg;
+		target2 = temp.bbr;
+
+		temp = color - target;
+		temp += temp2;
+		temp2 = temp - target2;
+
+		color = lerp(color, temp2, TechnicolorStrength);
+		color = lerp(dot(color, 0.333), color, TechnicolorSaturation);
+
+		return color;
+	}
 	
 	void OutputPS(float4 pos : SV_Position, float2 texcoord : TEXCOORD, out float3 color : SV_Target0)
 	{
@@ -497,6 +554,11 @@ namespace Contrast
 		if(Gamma != 1.0 || Exposure != 0.0 || Saturation != 0.0 || Bleach != 0.0)
 		{
 			color = ApplyTonemap(color);
+		}
+
+		if(TechnicolorStrength != 0.0)
+		{
+			color = ApplyTechnicolor(color);
 		}
 				
 		if(Debug == 1)
